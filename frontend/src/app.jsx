@@ -5,10 +5,18 @@ import {
   ArrowLeft, Package, Search, Terminal, ChevronRight,
   Cpu, Monitor, Wifi, Volume2, LayoutDashboard, Code, Library, 
   AppWindow, Wrench, Container, Type, Boxes, Shield, Zap, 
-  Database, HardDrive, BookOpen, Palette
+  Database, HardDrive, BookOpen, Palette, Sparkles, TrendingUp
 } from 'lucide-react';
 import CursorSpotlight from './components/CursorSpotlight';
+import DiagnosticTool from './components/DiagnosticTool';
+import CategoryCard from './components/CategoryCard';
+import PackageCard from './components/PackageCard';
+import LoadingSkeleton from './components/LoadingSkeleton';
+import Toast from './components/Toast';
+import StatsPanel from './components/StatsPanel';
 import { api } from './api/client';
+import { useDebounce } from './hooks/useDebounce';
+import { useKeyboardShortcut } from './hooks/useKeyboardShortcut';
 
 // Create QueryClient instance
 const queryClient = new QueryClient({
@@ -16,12 +24,12 @@ const queryClient = new QueryClient({
     queries: {
       refetchOnWindowFocus: false,
       retry: 1,
-      staleTime: 5 * 60 * 1000, // 5 minutes
+      staleTime: 5 * 60 * 1000,
     },
   },
 });
 
-// Category icon mapping for all 20 categories
+// Category icon mapping
 const categoryIcons = {
   'System Core': Cpu,
   'System Services & Daemons': Zap,
@@ -45,18 +53,18 @@ const categoryIcons = {
   'Core Libraries (Low-Level)': HardDrive
 };
 
-// Animation variants for smooth transitions
+// Animation variants
 const pageVariants = {
   initial: { opacity: 0, y: 20 },
   animate: { 
     opacity: 1, 
     y: 0,
-    transition: { duration: 0.3, ease: [0.22, 1, 0.36, 1] }
+    transition: { duration: 0.4, ease: [0.22, 1, 0.36, 1] }
   },
   exit: { 
     opacity: 0, 
     y: -20,
-    transition: { duration: 0.2, ease: [0.22, 1, 0.36, 1] }
+    transition: { duration: 0.3, ease: [0.22, 1, 0.36, 1] }
   }
 };
 
@@ -65,23 +73,33 @@ function ArchLensApp() {
   const [view, setView] = useState('categories');
   const [selectedCategory, setSelectedCategory] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
-  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [showDiagnostic, setShowDiagnostic] = useState(false);
+  const [toast, setToast] = useState(null);
+  const [searchInputRef, setSearchInputRef] = useState(null);
 
   // Debounce search input
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      setDebouncedSearch(searchQuery);
-    }, 500);
-    return () => clearTimeout(timer);
-  }, [searchQuery]);
+  const debouncedSearch = useDebounce(searchQuery, 500);
 
-  // Fetch categories
-  const { data: categories, isLoading: categoriesLoading } = useQuery({
-    queryKey: ['categories'],
-    queryFn: api.getCategories,
+  // Keyboard shortcut for search (Cmd+K / Ctrl+K)
+  useKeyboardShortcut(['cmd+k', 'ctrl+k'], (e) => {
+    e.preventDefault();
+    searchInputRef?.focus();
   });
 
-  // Fetch packages for selected category with infinite scroll
+  // Show toast notification
+  const showToast = (message, type = 'info') => {
+    setToast({ message, type, id: Date.now() });
+    setTimeout(() => setToast(null), 4000);
+  };
+
+  // Fetch categories
+  const { data: categories, isLoading: categoriesLoading, error: categoriesError } = useQuery({
+    queryKey: ['categories'],
+    queryFn: api.getCategories,
+    onError: () => showToast('Failed to load categories', 'error')
+  });
+
+  // Fetch packages for selected category
   const {
     data: packagesData,
     fetchNextPage,
@@ -97,7 +115,7 @@ function ArchLensApp() {
     enabled: !!selectedCategory && view === 'packages',
   });
 
-  // Search packages with infinite scroll
+  // Search packages
   const {
     data: searchData,
     fetchNextPage: fetchNextSearchPage,
@@ -117,72 +135,111 @@ function ArchLensApp() {
     setSelectedCategory(categoryName);
     setView('packages');
     setSearchQuery('');
+    showToast(`Exploring ${categoryName}`, 'success');
   };
 
   const handleBack = () => {
-    if (view === 'packages') {
-      setView('categories');
-      setSelectedCategory(null);
-    }
+    setView('categories');
+    setSelectedCategory(null);
+    setSearchQuery('');
   };
 
   const handleSearchChange = (e) => {
-    setSearchQuery(e.target.value);
-    if (e.target.value.trim()) {
+    const value = e.target.value;
+    setSearchQuery(value);
+    if (value.trim()) {
       setView('search');
     } else {
       setView('categories');
     }
   };
 
-  // Flatten paginated results
   const packages = packagesData?.pages.flatMap(page => page.packages) || [];
   const searchResults = searchData?.pages.flatMap(page => page.packages) || [];
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-950 via-gray-900 to-gray-950 text-green-50 p-4 sm:p-6 lg:p-8 relative overflow-hidden">
+    <div className="min-h-screen bg-gradient-to-br from-gray-950 via-gray-900 to-gray-950 text-green-50 relative overflow-hidden">
       <CursorSpotlight />
       
-      <div className="max-w-7xl mx-auto relative z-10">
+      {/* Toast Notifications */}
+      <AnimatePresence>
+        {toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}
+      </AnimatePresence>
+      
+      <div className="max-w-7xl mx-auto p-4 sm:p-6 lg:p-8 relative z-10">
         {/* Header */}
-        <div className="mb-8 text-center space-y-4">
-          <motion.div 
-            className="flex items-center justify-center gap-3"
-            initial={{ opacity: 0, y: -20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.5 }}
-          >
-            <Package className="w-10 h-10 text-green-400 animate-pulse" />
-            <h1 className="text-4xl sm:text-5xl font-bold bg-gradient-to-r from-green-400 to-emerald-300 bg-clip-text text-transparent">
+        <motion.div 
+          className="mb-8 text-center space-y-4"
+          initial={{ opacity: 0, y: -20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5 }}
+        >
+          <div className="flex items-center justify-center gap-3">
+            <motion.div
+              animate={{ rotate: [0, 360] }}
+              transition={{ duration: 20, repeat: Infinity, ease: "linear" }}
+            >
+              <Package className="w-12 h-12 text-green-400" />
+            </motion.div>
+            <h1 className="text-5xl sm:text-6xl font-bold bg-gradient-to-r from-green-400 via-emerald-300 to-green-500 bg-clip-text text-transparent">
               ArchLens
             </h1>
-          </motion.div>
+            <Sparkles className="w-8 h-8 text-green-400 animate-pulse" />
+          </div>
           <p className="text-gray-400 text-lg">Demystifying Your Arch Linux System</p>
           
           {/* Search Bar */}
-          <motion.div 
-            className="max-w-2xl mx-auto"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ delay: 0.2 }}
-          >
-            <div className="relative">
-              <Search className="absolute left-4 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" />
+          <div className="max-w-2xl mx-auto">
+            <div className="relative group">
+              <Search className="absolute left-4 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400 group-focus-within:text-green-400 transition-colors" />
               <input
+                ref={setSearchInputRef}
                 type="text"
                 value={searchQuery}
                 onChange={handleSearchChange}
-                placeholder="Search packages..."
-                className="w-full pl-12 pr-4 py-3 bg-gray-800/50 border border-gray-700 rounded-lg text-green-100 placeholder-gray-500 focus:outline-none focus:border-green-500 focus:ring-2 focus:ring-green-500/20 transition-all"
+                placeholder="Search packages... (⌘K)"
+                className="w-full pl-12 pr-4 py-4 bg-gray-800/50 backdrop-blur-sm border border-gray-700 rounded-xl text-green-100 placeholder-gray-500 focus:outline-none focus:border-green-500 focus:ring-2 focus:ring-green-500/20 transition-all shadow-lg hover:shadow-green-500/10"
               />
+              <kbd className="absolute right-4 top-1/2 transform -translate-y-1/2 px-2 py-1 text-xs bg-gray-900 border border-gray-700 rounded text-gray-500">
+                ⌘K
+              </kbd>
             </div>
-          </motion.div>
-        </div>
+          </div>
+
+          {/* Navigation Tabs */}
+          <div className="flex items-center justify-center gap-4 mt-6">
+            <button
+              onClick={() => { setView('categories'); setShowDiagnostic(false); setSearchQuery(''); }}
+              className={`px-6 py-2 rounded-lg font-medium transition-all ${
+                view === 'categories' && !showDiagnostic
+                  ? 'bg-green-600 text-white shadow-lg shadow-green-500/50'
+                  : 'bg-gray-800/50 text-gray-400 hover:text-green-400'
+              }`}
+            >
+              Browse Packages
+            </button>
+            <button
+              onClick={() => { setShowDiagnostic(true); setView('diagnostic'); setSearchQuery(''); }}
+              className={`px-6 py-2 rounded-lg font-medium transition-all ${
+                showDiagnostic
+                  ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/50'
+                  : 'bg-gray-800/50 text-gray-400 hover:text-blue-400'
+              }`}
+            >
+              Diagnostic Tool
+            </button>
+          </div>
+        </motion.div>
+
+        {/* Stats Panel */}
+        {!showDiagnostic && categories && (
+          <StatsPanel categories={categories} />
+        )}
 
         {/* Main Content */}
         <div className="bg-gray-900/50 backdrop-blur-sm rounded-2xl border border-gray-800 shadow-2xl overflow-hidden">
           {/* Back Button */}
-          {(view === 'packages' || (view === 'search' && searchQuery)) && (
+          {(view === 'packages' || (view === 'search' && searchQuery)) && !showDiagnostic && (
             <motion.div 
               className="p-4 border-b border-gray-800 bg-gray-900/80"
               initial={{ opacity: 0, x: -20 }}
@@ -199,8 +256,22 @@ function ArchLensApp() {
           )}
 
           <AnimatePresence mode="wait">
+            {/* Diagnostic Tool View */}
+            {showDiagnostic && (
+              <motion.div
+                key="diagnostic"
+                variants={pageVariants}
+                initial="initial"
+                animate="animate"
+                exit="exit"
+                className="p-6"
+              >
+                <DiagnosticTool showToast={showToast} />
+              </motion.div>
+            )}
+
             {/* Categories View */}
-            {view === 'categories' && !searchQuery && (
+            {view === 'categories' && !searchQuery && !showDiagnostic && (
               <motion.div
                 key="categories"
                 variants={pageVariants}
@@ -215,47 +286,29 @@ function ArchLensApp() {
                 </h2>
 
                 {categoriesLoading ? (
+                  <LoadingSkeleton count={20} type="category" />
+                ) : categoriesError ? (
                   <div className="text-center py-12">
-                    <div className="inline-block animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-green-400"></div>
-                    <p className="text-gray-400 mt-4">Loading categories...</p>
+                    <p className="text-red-400">Failed to load categories. Please try again.</p>
                   </div>
                 ) : (
                   <div className="grid gap-3">
-                    {categories?.map((category, idx) => {
-                      const IconComponent = categoryIcons[category.name] || Package;
-                      return (
-                        <motion.div
-                          key={category.name}
-                          initial={{ opacity: 0, y: 20 }}
-                          animate={{ opacity: 1, y: 0 }}
-                          transition={{ delay: idx * 0.05 }}
-                          onClick={() => handleCategorySelect(category.name)}
-                          className="group p-5 rounded-xl bg-gray-800/50 border border-gray-700 hover:border-green-500/50 hover:bg-gray-800 cursor-pointer transition-all duration-300 hover:shadow-lg hover:shadow-green-500/10 transform hover:scale-[1.02]"
-                        >
-                          <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-4 flex-1">
-                              <IconComponent className="w-6 h-6 text-green-400 transition-transform group-hover:scale-110" />
-                              <div className="flex-1">
-                                <div className="flex items-center gap-3 mb-1">
-                                  <span className="text-green-300 font-bold text-lg">{category.name}</span>
-                                  <span className="text-gray-500 text-sm">
-                                    ({category.count} packages)
-                                  </span>
-                                </div>
-                              </div>
-                            </div>
-                            <ChevronRight className="w-5 h-5 text-gray-600 group-hover:text-green-400 transition-all group-hover:translate-x-1" />
-                          </div>
-                        </motion.div>
-                      );
-                    })}
+                    {categories?.map((category, idx) => (
+                      <CategoryCard
+                        key={category.name}
+                        category={category}
+                        icon={categoryIcons[category.name]}
+                        onClick={() => handleCategorySelect(category.name)}
+                        index={idx}
+                      />
+                    ))}
                   </div>
                 )}
               </motion.div>
             )}
 
             {/* Packages View */}
-            {view === 'packages' && selectedCategory && (
+            {view === 'packages' && selectedCategory && !showDiagnostic && (
               <motion.div
                 key="packages"
                 variants={pageVariants}
@@ -275,29 +328,12 @@ function ArchLensApp() {
                 </div>
 
                 {packagesLoading ? (
-                  <div className="text-center py-12">
-                    <div className="inline-block animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-green-400"></div>
-                    <p className="text-gray-400 mt-4">Loading packages...</p>
-                  </div>
+                  <LoadingSkeleton count={30} type="package" />
                 ) : (
                   <>
                     <div className="grid gap-3">
                       {packages.map((pkg, idx) => (
-                        <motion.div
-                          key={pkg.id}
-                          initial={{ opacity: 0, x: -20 }}
-                          animate={{ opacity: 1, x: 0 }}
-                          transition={{ delay: idx * 0.03 }}
-                          className="p-4 rounded-xl bg-gray-800/50 border border-gray-700 hover:border-green-500/50 hover:bg-gray-800 transition-all duration-300"
-                        >
-                          <div className="flex items-start gap-3">
-                            <Terminal className="w-5 h-5 text-green-400 mt-1 flex-shrink-0" />
-                            <div className="flex-1 min-w-0">
-                              <h3 className="text-green-300 font-bold text-lg mb-1">{pkg.name}</h3>
-                              <p className="text-gray-400 text-sm">{pkg.description}</p>
-                            </div>
-                          </div>
-                        </motion.div>
+                        <PackageCard key={pkg.id} package={pkg} index={idx} />
                       ))}
                     </div>
 
@@ -306,9 +342,9 @@ function ArchLensApp() {
                         <button
                           onClick={() => fetchNextPage()}
                           disabled={isFetchingNextPage}
-                          className="px-6 py-3 bg-green-600 hover:bg-green-700 disabled:bg-gray-700 text-white font-medium rounded-lg transition-all"
+                          className="px-8 py-3 bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 disabled:from-gray-700 disabled:to-gray-700 text-white font-medium rounded-xl transition-all transform hover:scale-105 disabled:scale-100 shadow-lg"
                         >
-                          {isFetchingNextPage ? 'Loading...' : 'Load More'}
+                          {isFetchingNextPage ? 'Loading...' : 'Load More Packages'}
                         </button>
                       </div>
                     )}
@@ -318,7 +354,7 @@ function ArchLensApp() {
             )}
 
             {/* Search Results View */}
-            {view === 'search' && debouncedSearch && (
+            {view === 'search' && debouncedSearch && !showDiagnostic && (
               <motion.div
                 key="search"
                 variants={pageVariants}
@@ -327,15 +363,13 @@ function ArchLensApp() {
                 exit="exit"
                 className="p-6"
               >
-                <h2 className="text-2xl font-bold text-green-300 mb-6">
+                <h2 className="text-2xl font-bold text-green-300 mb-6 flex items-center gap-2">
+                  <Search className="w-6 h-6" />
                   Search Results for "{debouncedSearch}"
                 </h2>
 
                 {searchLoading ? (
-                  <div className="text-center py-12">
-                    <div className="inline-block animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-green-400"></div>
-                    <p className="text-gray-400 mt-4">Searching...</p>
-                  </div>
+                  <LoadingSkeleton count={30} type="package" />
                 ) : searchResults.length === 0 ? (
                   <div className="text-center py-12">
                     <Search className="w-16 h-16 text-gray-600 mx-auto mb-4" />
@@ -345,26 +379,13 @@ function ArchLensApp() {
                   <>
                     <div className="grid gap-3">
                       {searchResults.map((pkg, idx) => (
-                        <motion.div
-                          key={pkg.id}
-                          initial={{ opacity: 0, y: 20 }}
-                          animate={{ opacity: 1, y: 0 }}
-                          transition={{ delay: idx * 0.03 }}
-                          className="p-4 rounded-xl bg-gray-800/50 border border-gray-700 hover:border-green-500/50 hover:bg-gray-800 transition-all duration-300"
-                        >
-                          <div className="flex items-start gap-3">
-                            <Terminal className="w-5 h-5 text-green-400 mt-1 flex-shrink-0" />
-                            <div className="flex-1 min-w-0">
-                              <div className="flex items-center gap-2 mb-1">
-                                <h3 className="text-green-300 font-bold text-lg">{pkg.name}</h3>
-                                <span className="text-xs px-2 py-0.5 bg-blue-500/20 text-blue-400 rounded">
-                                  {pkg.category}
-                                </span>
-                              </div>
-                              <p className="text-gray-400 text-sm">{pkg.description}</p>
-                            </div>
-                          </div>
-                        </motion.div>
+                        <PackageCard 
+                          key={pkg.id} 
+                          package={pkg} 
+                          index={idx} 
+                          showCategory 
+                          searchTerm={debouncedSearch}
+                        />
                       ))}
                     </div>
 
@@ -373,9 +394,9 @@ function ArchLensApp() {
                         <button
                           onClick={() => fetchNextSearchPage()}
                           disabled={isFetchingNextSearchPage}
-                          className="px-6 py-3 bg-green-600 hover:bg-green-700 disabled:bg-gray-700 text-white font-medium rounded-lg transition-all"
+                          className="px-8 py-3 bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 disabled:from-gray-700 disabled:to-gray-700 text-white font-medium rounded-xl transition-all transform hover:scale-105 disabled:scale-100 shadow-lg"
                         >
-                          {isFetchingNextSearchPage ? 'Loading...' : 'Load More'}
+                          {isFetchingNextSearchPage ? 'Loading...' : 'Load More Results'}
                         </button>
                       </div>
                     )}
@@ -388,12 +409,18 @@ function ArchLensApp() {
 
         {/* Footer */}
         <motion.div 
-          className="mt-8 text-center text-gray-500 text-sm"
+          className="mt-8 text-center text-gray-500 text-sm space-y-2"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           transition={{ delay: 0.5 }}
         >
-          <p>ArchLens v1.0.0 • Making Arch Linux understandable, one package at a time</p>
+          <p className="flex items-center justify-center gap-2">
+            <TrendingUp className="w-4 h-4" />
+            ArchLens v1.0.0 • Making Arch Linux understandable, one package at a time
+          </p>
+          <p className="text-xs text-gray-600">
+            Powered by FastAPI, React, PostgreSQL & Supabase
+          </p>
         </motion.div>
       </div>
     </div>
